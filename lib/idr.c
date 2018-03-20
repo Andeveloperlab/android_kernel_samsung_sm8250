@@ -365,7 +365,25 @@ EXPORT_SYMBOL(idr_replace);
 
 #define IDA_MAX (0x80000000U / IDA_BITMAP_BITS - 1)
 
-static int ida_get_new_above(struct ida *ida, int start)
+/**
+ * ida_get_new_above - allocate new ID above or equal to a start id
+ * @ida: ida handle
+ * @start: id to start search at
+ * @id: pointer to the allocated handle
+ *
+ * Allocate new ID above or equal to @start.  It should be called
+ * with any required locks to ensure that concurrent calls to
+ * ida_get_new_above() / ida_get_new() / ida_remove() are not allowed.
+ * Consider using ida_alloc_range() if you do not have complex locking
+ * requirements.
+ *
+ * If memory is required, it will return %-EAGAIN, you should unlock
+ * and go back to the ida_pre_get() call.  If the ida is full, it will
+ * return %-ENOSPC.  On success, it will return 0.
+ *
+ * @id returns a value in the range @start ... %0x7fffffff.
+ */
+int ida_get_new_above(struct ida *ida, int start, int *id)
 {
 	struct radix_tree_root *root = &ida->ida_rt;
 	void __rcu **slot;
@@ -534,7 +552,7 @@ EXPORT_SYMBOL(ida_destroy);
 int ida_alloc_range(struct ida *ida, unsigned int min, unsigned int max,
 			gfp_t gfp)
 {
-	int id = 0;
+	int ret, id;
 	unsigned long flags;
 
 	if ((int)min < 0)
@@ -544,11 +562,8 @@ int ida_alloc_range(struct ida *ida, unsigned int min, unsigned int max,
 		max = INT_MAX;
 
 again:
-	if (!ida_pre_get(ida, gfp_mask))
-		return -ENOMEM;
-
 	xa_lock_irqsave(&ida->ida_rt, flags);
-	ret = ida_get_new_above(ida, start, &id);
+	ret = ida_get_new_above(ida, min, &id);
 	if (!ret) {
 		if (id > max) {
 			ida_remove(ida, id);
@@ -559,7 +574,7 @@ again:
 	}
 	xa_unlock_irqrestore(&ida->ida_rt, flags);
 
-	if (unlikely(id == -EAGAIN)) {
+	if (unlikely(ret == -EAGAIN)) {
 		if (!ida_pre_get(ida, gfp))
 			return -ENOMEM;
 		goto again;
