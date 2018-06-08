@@ -544,11 +544,18 @@ int ida_alloc_range(struct ida *ida, unsigned int min, unsigned int max,
 		max = INT_MAX;
 
 again:
+	if (!ida_pre_get(ida, gfp_mask))
+		return -ENOMEM;
+
 	xa_lock_irqsave(&ida->ida_rt, flags);
-	id = ida_get_new_above(ida, min);
-	if (id > (int)max) {
-		ida_remove(ida, id);
-		id = -ENOSPC;
+	ret = ida_get_new_above(ida, start, &id);
+	if (!ret) {
+		if (id > max) {
+			ida_remove(ida, id);
+			ret = -ENOSPC;
+		} else {
+			ret = id;
+		}
 	}
 	xa_unlock_irqrestore(&ida->ida_rt, flags);
 
